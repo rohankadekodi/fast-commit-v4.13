@@ -953,6 +953,32 @@ struct ext4_inode_info {
 
 	struct list_head i_orphan;	/* unlinked but open inodes */
 
+	struct list_head i_fc_list;	/*
+					 * inodes that need fast commit
+					 * protected by sbi->s_fc_lock.
+					 */
+	/*
+	 * TID of when this struct was last updated. If fc_tid !=
+	 * running transaction tid, then none of the other fields in this
+	 * struct are valid. Don't directly modify fields in this struct.
+	 * Use wrappers provided in ext4_jbd2.c.
+	 */
+	tid_t i_fc_tid;
+
+	/*
+	 * Start of logical block range that needs to be committed in
+	 * this fast commit.
+	 */
+	ext4_lblk_t i_fc_lblk_start;
+
+	/*
+	 * End of logical block range that needs to be committed in this fast
+	 * commit
+	 */
+	ext4_lblk_t i_fc_lblk_end;
+
+	rwlock_t i_fc_lock;
+
 	/*
 	 * i_disksize keeps track of what the inode size is ON DISK, not
 	 * in memory.  During truncate, i_size is set to the new size by
@@ -1074,6 +1100,7 @@ struct ext4_inode_info {
 #define	EXT4_VALID_FS			0x0001	/* Unmounted cleanly */
 #define	EXT4_ERROR_FS			0x0002	/* Errors detected */
 #define	EXT4_ORPHAN_FS			0x0004	/* Orphans being recovered */
+#define EXT4_FC_REPLAY			0x0008	/* Fast commit replay ongoing */
 
 /*
  * Misc. filesystem flags
@@ -1516,6 +1543,12 @@ struct ext4_sb_info {
 	/* Barrier between changing inodes' journal flags and writepages ops. */
 	struct percpu_rw_semaphore s_journal_flag_rwsem;
 	struct dax_device *s_daxdev;
+
+	/* Ext4 fast commit stuff */
+	struct list_head s_fc_q;	/* Inodes staged for fast commit
+					 * that have data changes in them.
+					 */
+	spinlock_t s_fc_lock;
 };
 
 static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)

@@ -330,6 +330,127 @@ int __ext4_handle_dirty_super(const char *where, unsigned int line,
 		mark_buffer_dirty(bh);
 	return err;
 }
+
+static inline
+void ext4_reset_inode_fc_info(struct inode *inode)
+{
+	struct ext4_inode_info *ei = EXT4_I(inode);
+
+	ei->i_fc_tid = 0;
+	ei->i_fc_lblk_start = 0;
+	ei->i_fc_lblk_end = 0;
+}
+
+void ext4_init_inode_fc_info(struct inode *inode)
+{
+	struct ext4_inode_info *ei = EXT4_I(inode);
+
+	ext4_reset_inode_fc_info(inode);
+	INIT_LIST_HEAD(&ei->i_fc_list);
+}
+
+static void ext4_fc_enqueue_inode(struct inode *inode)
+{
+	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
+
+	if (!ext4_should_fast_commit(inode->i_sb) ||
+	    (EXT4_SB(inode->i_sb)->s_mount_state & EXT4_FC_REPLAY))
+		return;
+
+	spin_lock(&sbi->s_fc_lock);
+	if (list_empty(&EXT4_I(inode)->i_fc_list))
+		list_add_tail(&EXT4_I(inode)->i_fc_list, &sbi->s_fc_q);
+	spin_unlock(&sbi->s_fc_lock);
+}
+
+static inline tid_t get_running_txn_tid(struct super_block *sb)
+{
+	if (EXT4_SB(sb)->s_journal)
+		return EXT4_SB(sb)->s_journal->j_commit_sequence + 1;
+	return 0;
+}
+
+/*
+ * Generic fast commit tracking function. If this is the first
+ * time this we are called after a full commit, we initialize
+ * fast commit fields and then call __fc_track_fn() with
+ * update = 0. If we have already been called after a full commit,
+ * we pass update = 1. Based on that, the track function can
+ * determine if it needs to track a field for the first time
+ * or if it needs to just update the previously tracked value.
+ */
+static int __ext4_fc_track_template(
+	struct inode *inode,
+	int (*__fc_track_fn)(struct inode *, void *, bool),
+	void *args)
+{
+	tid_t running_txn_tid = get_running_txn_tid(inode->i_sb);
+	bool update = false;
+	struct ext4_inode_info *ei = EXT4_I(inode);
+	int ret;
+
+	if (!ext4_should_fast_commit(inode->i_sb) ||
+	    (EXT4_SB(inode->i_sb)->s_mount_state & EXT4_FC_REPLAY))
+		return -EOPNOTSUPP;
+
+	write_lock(&ei->i_fc_lock);
+	if (running_txn_tid == ei->i_fc_tid) {
+		update = true;
+	} else {
+		ext4_reset_inode_fc_info(inode);
+		ei->i_fc_tid = running_txn_tid;
+	}
+	ret = __fc_track_fn(inode, args, update);
+	write_unlock(&ei->i_fc_lock);
+
+	ext4_fc_enqueue_inode(inode);
+
+	return ret;
+}
+struct __ext4_fc_track_range_args {
+	ext4_lblk_t start, end;
+};
+
+#define MIN(__a, __b)  ((__a) < (__b) ? (__a) : (__b))
+#define MAX(__a, __b)  ((__a) > (__b) ? (__a) : (__b))
+
+int __ext4_fc_track_range(struct inode *inode, void *arg, bool update)
+{
+	struct ext4_inode_info *ei = EXT4_I(inode);
+	struct __ext4_fc_track_range_args *__arg =
+		(struct __ext4_fc_track_range_args *)arg;
+
+	if (inode->i_ino < EXT4_FIRST_INO(inode->i_sb)) {
+		ext4_debug("Special inode %ld being modified\n", inode->i_ino);
+		return -ECANCELED;
+	}
+
+	if (update) {
+		ei->i_fc_lblk_start = MIN(ei->i_fc_lblk_start, __arg->start);
+		ei->i_fc_lblk_end = MAX(ei->i_fc_lblk_end, __arg->end);
+	} else {
+		ei->i_fc_lblk_start = __arg->start;
+		ei->i_fc_lblk_end = __arg->end;
+	}
+
+	return 0;
+}
+
+void ext4_fc_track_range(struct inode *inode, ext4_lblk_t start,
+			 ext4_lblk_t end)
+{
+	struct __ext4_fc_track_range_args args;
+	int ret;
+
+	args.start = start;
+	args.end = end;
+
+	ret = __ext4_fc_track_template(inode,
+					__ext4_fc_track_range, &args);
+
+	trace_ext4_fc_track_range(inode, start, end, ret);
+}
+
 void ext4_init_fast_commit(struct super_block *sb, journal_t *journal)
 {
 	if (!ext4_should_fast_commit(sb))

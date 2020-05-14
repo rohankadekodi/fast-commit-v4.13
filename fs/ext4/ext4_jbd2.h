@@ -472,4 +472,7 @@ static inline int ext4_should_dioread_nolock(struct inode *inode)
 
 #define EXT4_NUM_FC_BLKS		128
 void ext4_init_fast_commit(struct super_block *sb, journal_t *journal);
+void ext4_init_inode_fc_info(struct inode *inode);
+void ext4_fc_track_range(struct inode *inode, ext4_lblk_t start,
+			 ext4_lblk_t end);
 #endif	/* _EXT4_JBD2_H */
