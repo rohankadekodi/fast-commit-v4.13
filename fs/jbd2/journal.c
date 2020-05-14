@@ -161,7 +161,9 @@ static void commit_timeout(struct timer_list *t)
  *
  * 1) COMMIT:  Every so often we need to commit the current state of the
  *    filesystem to disk.  The journal thread is responsible for writing
- *    all of the metadata buffers to disk.
+ *    all of the metadata buffers to disk. If a fast commit is ongoing
+ *    journal thread waits until it's done and then copntinues from
+ *    there on.
  *
  * 2) CHECKPOINT: We cannot reuse a used section of the log file until all
  *    of the data in that part of the log has been rewritten elsewhere on
@@ -718,6 +720,86 @@ int jbd2_log_wait_commit(journal_t *journal, tid_t tid)
 	return err;
 }
 
+/*
+ * Returns 0 if async fc could be started. Returns -EINVAL if no full
+ * commit has been done yet. Returns -EALREADY if another fast /
+ * full commit is ongoing.
+ */
+int jbd2_start_async_fc_nowait(journal_t *journal, tid_t tid)
+{
+	/*
+	 * Fast commits only allowed if at least one full commit has
+	 * been processed.
+	 */
+	if (!journal->j_stats.ts_tid)
+		return -EINVAL;
+
+	if (tid <= journal->j_commit_sequence)
+		return -EALREADY;
+
+	write_lock(&journal->j_state_lock);
+	if (journal->j_flags &
+	    (JBD2_FAST_COMMIT_ONGOING | JBD2_FULL_COMMIT_ONGOING)) {
+		write_unlock(&journal->j_state_lock);
+		return -EALREADY;
+	}
+
+	journal->j_flags |= JBD2_FAST_COMMIT_ONGOING;
+	write_unlock(&journal->j_state_lock);
+
+	return 0;
+}
+
+/*
+ * Same as above but waits for any ongoing fast commits to complete.
+ * If a full commit is ongoing, this function returns with
+ * -EALREADY.
+ */
+int jbd2_start_async_fc_wait(journal_t *journal, tid_t tid)
+{
+	int ret;
+
+	/*
+	 * Fast commits only allowed if at least one full commit has
+	 * been processed.
+	 */
+	if (!journal->j_stats.ts_tid)
+		return -EINVAL;
+
+	if (tid <= journal->j_commit_sequence)
+		return -EALREADY;
+
+	write_lock(&journal->j_state_lock);
+restart:
+	if (journal->j_flags & JBD2_FULL_COMMIT_ONGOING) {
+		ret = -EALREADY;
+	} else if (journal->j_flags & JBD2_FAST_COMMIT_ONGOING) {
+		DEFINE_WAIT(wait);
+
+		prepare_to_wait(&journal->j_wait_async_fc, &wait,
+				TASK_UNINTERRUPTIBLE);
+		write_unlock(&journal->j_state_lock);
+		schedule();
+		write_lock(&journal->j_state_lock);
+		finish_wait(&journal->j_wait_async_fc, &wait);
+		goto restart;
+	} else {
+		journal->j_flags |= JBD2_FAST_COMMIT_ONGOING;
+		ret = 0;
+	}
+	write_unlock(&journal->j_state_lock);
+
+	return ret;
+}
+
+void jbd2_stop_async_fc(journal_t *journal, tid_t tid)
+{
+	write_lock(&journal->j_state_lock);
+	journal->j_flags &= ~JBD2_FAST_COMMIT_ONGOING;
+	write_unlock(&journal->j_state_lock);
+	wake_up(&journal->j_wait_async_fc);
+}
+
 /* Return 1 when transaction with given tid has already committed. */
 int jbd2_transaction_committed(journal_t *journal, tid_t tid)
 {
@@ -1129,6 +1211,7 @@ static journal_t *journal_init_common(struct block_device *bdev,
 	init_waitqueue_head(&journal->j_wait_commit);
 	init_waitqueue_head(&journal->j_wait_updates);
 	init_waitqueue_head(&journal->j_wait_reserved);
+	init_waitqueue_head(&journal->j_wait_async_fc);
 	mutex_init(&journal->j_barrier);
 	mutex_init(&journal->j_checkpoint_mutex);
 	spin_lock_init(&journal->j_revoke_lock);
