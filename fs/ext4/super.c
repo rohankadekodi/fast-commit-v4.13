@@ -4214,6 +4214,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	mutex_init(&sbi->s_orphan_lock);
 
 	INIT_LIST_HEAD(&sbi->s_fc_q);
+	INIT_LIST_HEAD(&sbi->s_fc_dentry_q);
 	spin_lock_init(&sbi->s_fc_lock);
 	sb->s_root = NULL;
 
@@ -6057,6 +6058,11 @@ static int __init ext4_init_fs(void)
 	err = init_inodecache();
 	if (err)
 		goto out1;
+
+	err = ext4_init_fc_dentry_cache();
+	if (err)
+		goto out05;
+
 	register_as_ext3();
 	register_as_ext2();
 	err = register_filesystem(&ext4_fs_type);
@@ -6067,6 +6073,7 @@ static int __init ext4_init_fs(void)
 out:
 	unregister_as_ext2();
 	unregister_as_ext3();
+out05:
 	destroy_inodecache();
 out1:
 	ext4_exit_mballoc();

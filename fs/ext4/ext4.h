@@ -920,6 +920,26 @@ enum {
 };
 
 
+/* Fast commit tags */
+#define EXT4_FC_TAG_ADD_RANGE		0x1
+#define EXT4_FC_TAG_DEL_RANGE		0x2
+#define EXT4_FC_TAG_CREAT_DENTRY	0x3
+#define EXT4_FC_TAG_ADD_DENTRY		0x4
+#define EXT4_FC_TAG_DEL_DENTRY		0x5
+
+/*
+ * In memory list of dentry updates that are performed on the file
+ * system used by fast commit code.
+ */
+struct ext4_fc_dentry_update {
+	int fcd_op;		/* Type of update create / add / del */
+	int fcd_parent;		/* Parent inode number */
+	int fcd_ino;		/* Inode number */
+	struct qstr fcd_name;	/* Dirent name qstr */
+	unsigned char fcd_iname[DNAME_INLINE_LEN];	/* Dirent name string */
+	struct list_head fcd_list;
+};
+
 /*
  * fourth extended file system inode data in memory
  */
@@ -978,6 +998,11 @@ struct ext4_inode_info {
 	ext4_lblk_t i_fc_lblk_end;
 
 	rwlock_t i_fc_lock;
+
+	/*
+	 * Last mdata / dirent update that happened on this inode.
+	 */
+	struct ext4_fc_dentry_update *i_fc_mdata_update;
 
 	/*
 	 * i_disksize keeps track of what the inode size is ON DISK, not
@@ -1548,6 +1573,7 @@ struct ext4_sb_info {
 	struct list_head s_fc_q;	/* Inodes staged for fast commit
 					 * that have data changes in them.
 					 */
+	struct list_head s_fc_dentry_q;
 	spinlock_t s_fc_lock;
 };
 
