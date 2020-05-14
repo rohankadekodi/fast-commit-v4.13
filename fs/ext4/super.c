@@ -1106,7 +1106,8 @@ static int ext4_drop_inode(struct inode *inode)
 	int drop = generic_drop_inode(inode);
 	if (drop) {
 		spin_unlock(&inode->i_lock);
-		ext4_fc_del(inode);
+		if (!list_empty(&EXT4_I(inode)->i_fc_list))
+			drop = 0;
 		spin_lock(&inode->i_lock);
 	}
 

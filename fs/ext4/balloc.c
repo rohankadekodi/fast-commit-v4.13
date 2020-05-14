@@ -654,8 +654,9 @@ ext4_fsblk_t ext4_new_meta_blocks(handle_t *handle, struct inode *inode,
 	ar.len = count ? *count : 1;
 	ar.flags = flags;
 
-	ext4_fc_mark_ineligible(inode,
-				EXT4_FC_REASON_META_ALLOC);
+	// harshad: hack disable
+	// ext4_fc_mark_ineligible(inode,
+	// EXT4_FC_REASON_META_ALLOC);
 
 	ret = ext4_mb_new_blocks(handle, &ar, errp);
 	if (count)
