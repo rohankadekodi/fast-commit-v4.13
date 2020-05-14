@@ -3136,6 +3136,12 @@ extern void initialize_dirent_tail(struct ext4_dir_entry_tail *t,
 extern int ext4_handle_dirty_dirent_node(handle_t *handle,
 					 struct inode *inode,
 					 struct buffer_head *bh);
+
+extern int __ext4_unlink(struct inode *dir, const struct qstr *d_name,
+        struct inode *inode);
+extern int __ext4_link(struct inode *dir, struct inode *inode,
+        struct dentry *dentry);
+
 #define S_SHIFT 12
 static const unsigned char ext4_type_by_mode[(S_IFMT >> S_SHIFT) + 1] = {
 	[S_IFREG >> S_SHIFT]	= EXT4_FT_REG_FILE,
