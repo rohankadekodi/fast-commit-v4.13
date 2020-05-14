@@ -1126,6 +1126,7 @@ struct ext4_inode_info {
 #define	EXT4_ERROR_FS			0x0002	/* Errors detected */
 #define	EXT4_ORPHAN_FS			0x0004	/* Orphans being recovered */
 #define EXT4_FC_REPLAY			0x0008	/* Fast commit replay ongoing */
+#define EXT4_FC_INELIGIBLE		0x0010	/* Fast commit ineligible */
 
 /*
  * Misc. filesystem flags
@@ -1608,6 +1609,7 @@ enum {
 	EXT4_STATE_MAY_INLINE_DATA,	/* may have in-inode data */
 	EXT4_STATE_EXT_PRECACHED,	/* extents have been precached */
 	EXT4_STATE_LUSTRE_EA_INODE,	/* Lustre-style ea_inode */
+    EXT4_STATE_FC_ELIGIBLE,     /* File is Fast commit eligible */
 };
 
 #define EXT4_INODE_BIT_FNS(name, field, offset)				\

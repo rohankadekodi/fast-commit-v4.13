@@ -479,4 +479,8 @@ void ext4_fc_track_unlink(struct inode *inode, struct dentry *dentry);
 void ext4_fc_track_link(struct inode *inode, struct dentry *dentry);
 void ext4_fc_track_create(struct inode *inode, struct dentry *dentry);
 int __init ext4_init_fc_dentry_cache(void);
+void ext4_fc_track_inode(struct inode *inode);
+void ext4_fc_mark_ineligible(struct inode *inode, int reason);
+void ext4_fc_disable(struct super_block *sb, int reason);
+
 #endif	/* _EXT4_JBD2_H */

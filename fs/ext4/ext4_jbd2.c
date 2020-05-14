@@ -342,6 +342,7 @@ void ext4_reset_inode_fc_info(struct inode *inode)
 	ei->i_fc_lblk_start = 0;
 	ei->i_fc_lblk_end = 0;
 	ei->i_fc_mdata_update = NULL;
+	ext4_clear_inode_state(inode, EXT4_STATE_FC_ELIGIBLE);
 }
 
 void ext4_init_inode_fc_info(struct inode *inode)
@@ -373,6 +374,36 @@ static inline tid_t get_running_txn_tid(struct super_block *sb)
 	return 0;
 }
 
+bool ext4_is_inode_fc_ineligible(struct inode *inode)
+{
+	if (get_running_txn_tid(inode->i_sb) == EXT4_I(inode)->i_fc_tid)
+		return !ext4_test_inode_state(inode, EXT4_STATE_FC_ELIGIBLE);
+	return false;
+}
+
+void ext4_fc_mark_ineligible(struct inode *inode, int reason)
+{
+	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
+	struct ext4_inode_info *ei = EXT4_I(inode);
+
+	if (!ext4_should_fast_commit(inode->i_sb) ||
+	    (EXT4_SB(inode->i_sb)->s_mount_state & EXT4_FC_REPLAY))
+		return;
+
+	if (sbi->s_journal)
+		ei->i_fc_tid = get_running_txn_tid(inode->i_sb);
+	ext4_clear_inode_state(inode, EXT4_STATE_FC_ELIGIBLE);
+
+	ext4_fc_enqueue_inode(inode);
+}
+
+void ext4_fc_disable(struct super_block *sb, int reason)
+{
+	struct ext4_sb_info *sbi = EXT4_SB(sb);
+
+	sbi->s_mount_state |= EXT4_FC_INELIGIBLE;
+}
+
 /*
  * Generic fast commit tracking function. If this is the first
  * time this we are called after a full commit, we initialize
@@ -398,10 +429,15 @@ static int __ext4_fc_track_template(
 
 	write_lock(&ei->i_fc_lock);
 	if (running_txn_tid == ei->i_fc_tid) {
+		if (!ext4_test_inode_state(inode, EXT4_STATE_FC_ELIGIBLE)) {
+			write_unlock(&ei->i_fc_lock);
+			return -EINVAL;
+		}
 		update = true;
 	} else {
 		ext4_reset_inode_fc_info(inode);
 		ei->i_fc_tid = running_txn_tid;
+		ext4_set_inode_state(inode, EXT4_STATE_FC_ELIGIBLE);
 	}
 	ret = __fc_track_fn(inode, args, update);
 	write_unlock(&ei->i_fc_lock);
@@ -496,6 +532,27 @@ void ext4_fc_track_create(struct inode *inode, struct dentry *dentry)
 	ret = __ext4_fc_track_template(inode, __ext4_dentry_update,
 				       (void *)&args);
 	trace_ext4_fc_track_create(inode, dentry, ret);
+}
+
+static int __ext4_fc_add_inode(struct inode *inode, void *arg, bool update)
+{
+	struct ext4_inode_info *ei = EXT4_I(inode);
+
+	if (update)
+		return -EEXIST;
+
+	ei->i_fc_lblk_start = (i_size_read(inode) - 1) >> inode->i_blkbits;
+	ei->i_fc_lblk_end = (i_size_read(inode) - 1) >> inode->i_blkbits;
+
+	return 0;
+}
+
+void ext4_fc_track_inode(struct inode *inode)
+{
+	int ret;
+
+	ret = __ext4_fc_track_template(inode, __ext4_fc_add_inode, NULL);
+	trace_ext4_fc_track_inode(inode, ret);
 }
 
 struct __ext4_fc_track_range_args {
