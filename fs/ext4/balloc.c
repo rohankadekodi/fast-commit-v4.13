@@ -369,8 +369,13 @@ static int ext4_validate_block_bitmap(struct super_block *sb,
 				      struct buffer_head *bh)
 {
 	ext4_fsblk_t	blk;
-	struct ext4_group_info *grp = ext4_get_group_info(sb, block_group);
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
+	struct ext4_group_info *grp;
+
+	if (EXT4_SB(sb)->s_mount_state & EXT4_FC_REPLAY)
+		return 0;
+
+	grp = ext4_get_group_info(sb, block_group);
 
 	if (buffer_verified(bh))
 		return 0;
@@ -644,6 +649,9 @@ ext4_fsblk_t ext4_new_meta_blocks(handle_t *handle, struct inode *inode,
 	ar.goal = goal;
 	ar.len = count ? *count : 1;
 	ar.flags = flags;
+
+    ext4_fc_mark_ineligible(inode,
+            EXT4_FC_REASON_META_ALLOC);
 
 	ret = ext4_mb_new_blocks(handle, &ar, errp);
 	if (count)

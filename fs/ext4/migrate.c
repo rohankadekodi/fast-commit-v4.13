@@ -520,6 +520,7 @@ int ext4_ext_migrate(struct inode *inode)
 		 * work to orphan_list_cleanup()
 		 */
 		ext4_orphan_del(NULL, tmp_inode);
+		ext4_fc_del(inode);
 		retval = PTR_ERR(handle);
 		goto out;
 	}

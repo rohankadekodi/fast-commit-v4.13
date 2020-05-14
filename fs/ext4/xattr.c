@@ -2381,6 +2381,8 @@ retry_inode:
 		if (IS_SYNC(inode))
 			ext4_handle_sync(handle);
 	}
+	ext4_fc_mark_ineligible(inode,
+				EXT4_FC_REASON_XATTR);
 
 cleanup:
 	brelse(is.iloc.bh);
@@ -2459,6 +2461,8 @@ retry:
 			error = error2;
 	}
 
+	ext4_fc_mark_ineligible(inode,
+				EXT4_FC_REASON_XATTR);
 	return error;
 }
 
@@ -2874,6 +2878,8 @@ int ext4_xattr_delete_inode(handle_t *handle, struct inode *inode,
 					 error);
 			goto cleanup;
 		}
+		ext4_fc_mark_ineligible(inode,
+					EXT4_FC_REASON_XATTR);
 	}
 	error = 0;
 cleanup:
