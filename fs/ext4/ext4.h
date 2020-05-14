@@ -1636,6 +1636,10 @@ enum {
 	EXT4_STATE_EXT_PRECACHED,	/* extents have been precached */
 	EXT4_STATE_LUSTRE_EA_INODE,	/* Lustre-style ea_inode */
     EXT4_STATE_FC_ELIGIBLE,     /* File is Fast commit eligible */
+    EXT4_STATE_FC_DATA_SUBMIT,  /* File is going through fast commit */
+    EXT4_STATE_FC_MDATA_SUBMIT, /* Fast commit block is
+                                 * being submitted
+                                 */
 };
 
 #define EXT4_INODE_BIT_FNS(name, field, offset)				\
@@ -2647,6 +2651,9 @@ extern int ext4_group_extend(struct super_block *sb,
 extern int ext4_resize_fs(struct super_block *sb, ext4_fsblk_t n_blocks_count);
 
 /* super.c */
+
+int ext4_fc_async_commit_inode(journal_t *journal, tid_t commit_tid,
+			       struct inode *inode);
 extern struct buffer_head *ext4_sb_bread(struct super_block *sb,
 					 sector_t block, int op_flags);
 extern int ext4_seq_options_show(struct seq_file *seq, void *offset);

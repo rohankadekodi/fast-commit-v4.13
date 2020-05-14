@@ -75,6 +75,19 @@ struct partial_cluster;
 	{ FALLOC_FL_COLLAPSE_RANGE,	"COLLAPSE_RANGE"},	\
 	{ FALLOC_FL_ZERO_RANGE,		"ZERO_RANGE"})
 
+#define show_fc_reason(reason)						\
+	__print_symbolic(reason,					\
+		{ EXT4_FC_REASON_META_ALLOC,	"META_ALLOC"},		\
+		{ EXT4_FC_REASON_QUOTA,		"QUOTA"},		\
+		{ EXT4_FC_REASON_XATTR,		"XATTR"},		\
+		{ EXT4_FC_REASON_CROSS_RENAME,	"CROSS_RENAME"},	\
+		{ EXT4_FC_REASON_FALLOC_RANGE_OP,	"FALLOC_RANGE_OP"}, \
+		{ EXT4_FC_REASON_JOURNAL_FLAG_CHANGE, "JOURNAL_FLAG_CHANGE"}, \
+		{ EXT4_FC_REASON_MEM,	"NO_MEM"},			\
+		{ EXT4_FC_REASON_SWAP_BOOT,	"SWAP_BOOT"},		\
+		{ EXT4_FC_REASON_RESIZE,	"RESIZE"},		\
+		{ EXT4_FC_REASON_RENAME_DIR,	"FALLOC_RANGE_OP"})
+
 
 TRACE_EVENT(ext4_other_inode_update_time,
 	TP_PROTO(struct inode *inode, ino_t orig_ino),
@@ -2701,6 +2714,93 @@ TRACE_EVENT(ext4_error,
 	TP_printk("dev %d,%d function %s line %u",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->function, __entry->line)
+);
+
+TRACE_EVENT(ext4_journal_fc_commit_cb_start,
+	TP_PROTO(struct super_block *sb),
+
+	TP_ARGS(sb),
+
+	TP_STRUCT__entry(
+		__field(dev_t, dev)
+	),
+
+	TP_fast_assign(
+		__entry->dev = sb->s_dev;
+	),
+
+	TP_printk("fast_commit started on dev %d,%d",
+		  MAJOR(__entry->dev), MINOR(__entry->dev))
+);
+
+TRACE_EVENT(ext4_journal_fc_commit_cb_stop,
+	    TP_PROTO(struct super_block *sb, int nblks, const char *reason),
+
+	TP_ARGS(sb, nblks, reason),
+
+	TP_STRUCT__entry(
+		__field(dev_t, dev)
+		__field(int, nblks)
+		__field(const char *, reason)
+		__field(int, num_fc)
+		__field(int, num_fc_ineligible)
+		__field(int, nblks_agg)
+	),
+
+	TP_fast_assign(
+		__entry->dev = sb->s_dev;
+		__entry->nblks = nblks;
+		__entry->reason = reason;
+		__entry->num_fc = EXT4_SB(sb)->s_fc_stats.fc_num_commits;
+		__entry->num_fc_ineligible =
+			EXT4_SB(sb)->s_fc_stats.fc_ineligible_commits;
+		__entry->nblks_agg = EXT4_SB(sb)->s_fc_stats.fc_numblks;
+	),
+
+	TP_printk("fc on [%d,%d] nblks %d, reason %s, fc = %d, ineligible = %d, agg_nblks %d",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->nblks, __entry->reason, __entry->num_fc,
+		  __entry->num_fc_ineligible, __entry->nblks_agg)
+);
+
+#define FC_REASON_NAME_STAT(reason)					\
+	show_fc_reason(reason),						\
+	__entry->sbi->s_fc_stats.fc_ineligible_reason_count[reason]
+
+TRACE_EVENT(ext4_journal_fc_stats,
+	    TP_PROTO(struct super_block *sb),
+
+	    TP_ARGS(sb),
+
+	    TP_STRUCT__entry(
+		    __field(dev_t, dev)
+		    __field(struct ext4_sb_info *, sbi)
+		    __field(int, count)
+		    ),
+
+	    TP_fast_assign(
+		    __entry->dev = sb->s_dev;
+		    __entry->sbi = EXT4_SB(sb);
+		    ),
+
+	    TP_printk("dev %d:%d fc ineligible reasons:\n"
+		      "%s:%d, %s:%d, %s:%d, %s:%d, %s:%d, %s:%d, %s:%d, %s:%d, %s:%d, %s:%d; "
+		      "num_commits:%d, ineligible: %d, numblks: %d",
+		      MAJOR(__entry->dev), MINOR(__entry->dev),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_META_ALLOC),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_QUOTA),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_XATTR),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_CROSS_RENAME),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_FALLOC_RANGE_OP),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_JOURNAL_FLAG_CHANGE),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_MEM),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_SWAP_BOOT),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_RESIZE),
+		      FC_REASON_NAME_STAT(EXT4_FC_REASON_RENAME_DIR),
+		      __entry->sbi->s_fc_stats.fc_num_commits,
+		      __entry->sbi->s_fc_stats.fc_ineligible_commits,
+		      __entry->sbi->s_fc_stats.fc_numblks)
+
 );
 
 #define DEFINE_TRACE_DENTRY_EVENT(__type)				\

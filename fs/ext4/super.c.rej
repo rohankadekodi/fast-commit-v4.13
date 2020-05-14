@@ -1,0 +1,26 @@
+--- fs/ext4/super.c
++++ fs/ext4/super.c
+@@ -1162,6 +1162,11 @@ static int ext4_drop_inode(struct inode *inode)
+ 
+ 	if (!drop)
+ 		drop = fscrypt_drop_inode(inode);
++	if (drop) {
++		spin_unlock(&inode->i_lock);
++		ext4_fc_del(inode);
++		spin_lock(&inode->i_lock);
++	}
+ 
+ 	trace_ext4_drop_inode(inode, drop);
+ 	return drop;
+@@ -1170,6 +1175,11 @@ static int ext4_drop_inode(struct inode *inode)
+ static void ext4_free_in_core_inode(struct inode *inode)
+ {
+ 	fscrypt_free_inode(inode);
++	if (!list_empty(&(EXT4_I(inode)->i_fc_list))) {
++		pr_warn("%s: inode %ld still in fc list",
++			__func__, inode->i_ino);
++		ext4_fc_del(inode);
++	}
+ 	kmem_cache_free(ext4_inode_cachep, EXT4_I(inode));
+ }
+ 

@@ -934,6 +934,8 @@ static void dump_orphan_list(struct super_block *sb, struct ext4_sb_info *sbi)
 		       inode->i_mode, inode->i_nlink,
 		       NEXT_ORPHAN(inode));
 	}
+	if (!list_empty(&(EXT4_I(inode)->i_fc_list)))
+		ext4_fc_del(inode);
 }
 
 #ifdef CONFIG_QUOTA
@@ -1104,6 +1106,11 @@ static struct inode *ext4_alloc_inode(struct super_block *sb)
 static int ext4_drop_inode(struct inode *inode)
 {
 	int drop = generic_drop_inode(inode);
+    if (drop) {
+        spin_unlock(&inode->i_lock);
+        ext4_fc_del(inode);
+        spin_lock(&inode->i_lock);
+    }
 
 	trace_ext4_drop_inode(inode, drop);
 	return drop;

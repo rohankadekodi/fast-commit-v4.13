@@ -5419,8 +5419,10 @@ int ext4_write_inode(struct inode *inode, struct writeback_control *wbc)
 		if (wbc->sync_mode != WB_SYNC_ALL || wbc->for_sync)
 			return 0;
 
-		err = jbd2_complete_transaction(EXT4_SB(inode->i_sb)->s_journal,
-						EXT4_I(inode)->i_sync_tid);
+		err = ext4_fc_async_commit_inode(EXT4_SB(inode->i_sb)
+						 ->s_journal,
+						 EXT4_I(inode)->i_sync_tid,
+						 inode);
 	} else {
 		struct ext4_iloc iloc;
 
