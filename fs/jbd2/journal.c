@@ -1184,6 +1184,14 @@ err_cleanup:
 	return NULL;
 }
 
+void jbd2_init_fast_commit(journal_t *journal, int num_fc_blks)
+{
+	journal->j_fc_wbufsize = num_fc_blks;
+	journal->j_wbufsize = journal->j_blocksize / sizeof(journal_block_tag_t)
+				- journal->j_fc_wbufsize;
+	journal->j_fc_wbuf = &journal->j_wbuf[journal->j_wbufsize];
+}
+
 /* jbd2_journal_init_dev and jbd2_journal_init_inode:
  *
  * Create a journal structure assigned some fixed set of disk blocks to
@@ -1681,6 +1689,9 @@ int jbd2_journal_load(journal_t *journal)
 		return -EFSCORRUPTED;
 	}
 
+	if (journal->j_fc_wbufsize > 0)
+		jbd2_journal_set_features(journal, 0, 0,
+					  JBD2_FEATURE_INCOMPAT_FAST_COMMIT);
 	/* OK, we've finished with the dynamic journal bits:
 	 * reinitialise the dynamic contents of the superblock in memory
 	 * and reset them on disk. */

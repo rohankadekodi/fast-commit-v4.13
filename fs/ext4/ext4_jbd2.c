@@ -330,3 +330,9 @@ int __ext4_handle_dirty_super(const char *where, unsigned int line,
 		mark_buffer_dirty(bh);
 	return err;
 }
+void ext4_init_fast_commit(struct super_block *sb, journal_t *journal)
+{
+	if (!ext4_should_fast_commit(sb))
+		return;
+	jbd2_init_fast_commit(journal, EXT4_NUM_FC_BLKS);
+}
