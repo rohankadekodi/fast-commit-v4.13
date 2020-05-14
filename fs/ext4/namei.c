@@ -2434,7 +2434,7 @@ static int ext4_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		       bool excl)
 {
 	handle_t *handle;
-	struct inode *inode;
+	struct inode *inode, *inode_save;
 	int err, credits, retries = 0;
 
 	err = dquot_initialize(dir);
@@ -2452,7 +2452,11 @@ retry:
 		inode->i_op = &ext4_file_inode_operations;
 		inode->i_fop = &ext4_file_operations;
 		ext4_set_aops(inode);
+        inode_save = inode;
+        ihold(inode_save);
 		err = ext4_add_nondir(handle, dentry, inode);
+        ext4_fc_track_create(inode_save, dentry);
+        iput(inode_save);
 		if (!err && IS_DIRSYNC(dir))
 			ext4_handle_sync(handle);
 	}
@@ -2467,7 +2471,7 @@ static int ext4_mknod(struct inode *dir, struct dentry *dentry,
 		      umode_t mode, dev_t rdev)
 {
 	handle_t *handle;
-	struct inode *inode;
+	struct inode *inode, *inode_save;
 	int err, credits, retries = 0;
 
 	err = dquot_initialize(dir);
@@ -2484,7 +2488,12 @@ retry:
 	if (!IS_ERR(inode)) {
 		init_special_inode(inode, inode->i_mode, rdev);
 		inode->i_op = &ext4_special_inode_operations;
+        inode_save = inode;
+        ihold(inode_save);
 		err = ext4_add_nondir(handle, dentry, inode);
+        if (!err)
+            ext4_fc_track_create(inode_save, dentry);
+        iput(inode_save);
 		if (!err && IS_DIRSYNC(dir))
 			ext4_handle_sync(handle);
 	}
@@ -2521,6 +2530,8 @@ retry:
 		err = ext4_orphan_add(handle, inode);
 		if (err)
 			goto err_unlock_inode;
+
+		ext4_fc_track_inode(inode);
 		mark_inode_dirty(inode);
 		unlock_new_inode(inode);
 	}
@@ -2647,6 +2658,7 @@ out_clear_inode:
 		iput(inode);
 		goto out_stop;
 	}
+	ext4_fc_track_create(inode, dentry);
 	ext4_inc_count(handle, dir);
 	ext4_update_dx_flag(dir);
 	err = ext4_mark_inode_dirty(handle, dir);
@@ -3072,6 +3084,9 @@ static int ext4_unlink(struct inode *dir, struct dentry *dentry)
 		return retval;
 
 	retval = __ext4_unlink(dir, &dentry->d_name, d_inode(dentry));
+    if (!retval) {
+        ext4_fc_track_unlink(d_inode(dentry), dentry);
+    }
 
 	trace_ext4_unlink_exit(dentry, retval);
 	return retval;
@@ -3227,6 +3242,7 @@ retry:
 
 	err = ext4_add_entry(handle, dentry, inode);
 	if (!err) {
+		ext4_fc_track_link(inode, dentry);
 		ext4_mark_inode_dirty(handle, inode);
 		/* this can happen only for tmpfile being
 		 * linked the first time
@@ -3674,6 +3690,23 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 			ext4_mark_inode_dirty(handle, new.dir);
 		}
 	}
+
+	if (S_ISDIR(old.inode->i_mode)) {
+		/*
+		 * We disable fast commits here that's because the
+		 * replay code is not yet capable of changing dot dot
+		 * dirents in directories. Since this is a metadata
+		 * update that's ineligible, we need to mark entire fs
+		 * as ineligbile.
+		 */
+		ext4_fc_disable(old.inode->i_sb, EXT4_FC_REASON_RENAME_DIR);
+	} else {
+		if (new.inode)
+			ext4_fc_track_unlink(new.inode, new.dentry);
+		ext4_fc_track_link(old.inode, new.dentry);
+		ext4_fc_track_unlink(old.inode, old.dentry);
+	}
+
 	ext4_mark_inode_dirty(handle, old.dir);
 	if (new.inode) {
 		ext4_mark_inode_dirty(handle, new.inode);
@@ -3810,7 +3843,11 @@ static int ext4_cross_rename(struct inode *old_dir, struct dentry *old_dentry,
 	ctime = current_time(old.inode);
 	old.inode->i_ctime = ctime;
 	new.inode->i_ctime = ctime;
+	ext4_fc_mark_ineligible(old.inode,
+				EXT4_FC_REASON_CROSS_RENAME);
 	ext4_mark_inode_dirty(handle, old.inode);
+	ext4_fc_mark_ineligible(new.inode,
+				EXT4_FC_REASON_CROSS_RENAME);
 	ext4_mark_inode_dirty(handle, new.inode);
 
 	if (old.dir_bh) {

@@ -390,6 +390,8 @@ void ext4_fc_mark_ineligible(struct inode *inode, int reason)
 	    (EXT4_SB(inode->i_sb)->s_mount_state & EXT4_FC_REPLAY))
 		return;
 
+	WARN_ON(reason >= EXT4_FC_REASON_MAX);
+	sbi->s_fc_stats.fc_ineligible_reason_count[reason]++;
 	if (sbi->s_journal)
 		ei->i_fc_tid = get_running_txn_tid(inode->i_sb);
 	ext4_clear_inode_state(inode, EXT4_STATE_FC_ELIGIBLE);
@@ -402,6 +404,8 @@ void ext4_fc_disable(struct super_block *sb, int reason)
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 
 	sbi->s_mount_state |= EXT4_FC_INELIGIBLE;
+	WARN_ON(reason >= EXT4_FC_REASON_MAX);
+	sbi->s_fc_stats.fc_ineligible_reason_count[reason]++;
 }
 
 /*
@@ -463,6 +467,7 @@ static int __ext4_dentry_update(struct inode *inode, void *arg, bool update)
 	write_unlock(&ei->i_fc_lock);
 	node = kmem_cache_alloc(ext4_fc_dentry_cachep, GFP_NOFS);
 	if (!node) {
+		ext4_fc_disable(inode->i_sb, EXT4_FC_REASON_MEM);
 		write_lock(&ei->i_fc_lock);
 		return -ENOMEM;
 	}

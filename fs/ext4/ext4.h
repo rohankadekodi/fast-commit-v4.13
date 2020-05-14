@@ -1399,6 +1399,31 @@ struct ext4_super_block {
 #define EXT4_MAXQUOTAS 3
 
 /*
+ * Fast commit ineligible reasons.
+ */
+enum {
+	EXT4_FC_REASON_META_ALLOC,
+	EXT4_FC_REASON_QUOTA,
+	EXT4_FC_REASON_XATTR,
+	EXT4_FC_REASON_CROSS_RENAME,
+	EXT4_FC_REASON_FALLOC_RANGE_OP,
+	EXT4_FC_REASON_JOURNAL_FLAG_CHANGE,
+	EXT4_FC_REASON_DELETE,
+	EXT4_FC_REASON_MEM,
+	EXT4_FC_REASON_SWAP_BOOT,
+	EXT4_FC_REASON_RESIZE,
+	EXT4_FC_REASON_RENAME_DIR,
+	EXT4_FC_REASON_MAX
+};
+
+struct ext4_fc_stats {
+	int fc_ineligible_reason_count[EXT4_FC_REASON_MAX];
+	int fc_num_commits;
+	int fc_ineligible_commits;
+	int fc_numblks;
+};
+
+/*
  * fourth extended-fs super-block data in memory
  */
 struct ext4_sb_info {
@@ -1576,6 +1601,7 @@ struct ext4_sb_info {
 					 */
 	struct list_head s_fc_dentry_q;
 	spinlock_t s_fc_lock;
+	struct ext4_fc_stats s_fc_stats;
 };
 
 static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)

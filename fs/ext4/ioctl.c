@@ -204,6 +204,8 @@ static long swap_inode_boot_loader(struct super_block *sb,
 
 	ext4_discard_preallocations(inode);
 
+	if (EXT4_SB(sb)->s_journal)
+		ext4_fc_disable(sb, EXT4_FC_REASON_SWAP_BOOT);
 	err = ext4_mark_inode_dirty(handle, inode);
 	if (err < 0) {
 		/* No need to update quota information. */
@@ -349,6 +351,8 @@ static int ext4_ioctl_setflags(struct inode *inode,
 	inode->i_ctime = current_time(inode);
 
 	err = ext4_mark_iloc_dirty(handle, inode, &iloc);
+	ext4_fc_track_inode(inode);
+
 flags_err:
 	ext4_journal_stop(handle);
 	if (err)
@@ -971,6 +975,7 @@ mext_out:
 
 		err = ext4_resize_fs(sb, n_blocks_count);
 		if (EXT4_SB(sb)->s_journal) {
+			ext4_fc_disable(sb, EXT4_FC_REASON_RESIZE);
 			jbd2_journal_lock_updates(EXT4_SB(sb)->s_journal);
 			err2 = jbd2_journal_flush(EXT4_SB(sb)->s_journal);
 			jbd2_journal_unlock_updates(EXT4_SB(sb)->s_journal);

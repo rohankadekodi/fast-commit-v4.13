@@ -257,6 +257,7 @@ retry:
 		inode->i_mode = mode;
 		inode->i_ctime = current_time(inode);
 		ext4_mark_inode_dirty(handle, inode);
+		ext4_fc_track_inode(inode);
 	}
 out_stop:
 	ext4_journal_stop(handle);
