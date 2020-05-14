@@ -3026,15 +3026,19 @@ int __ext4_unlink(struct inode *dir, const struct qstr *d_name,
 
 	if (inode->i_nlink == 0) {
 		ext4_warning_inode(inode, "Deleting file '%.*s' with no links",
-				   dentry->d_name.len, dentry->d_name.name);
+				   d_name->len, d_name->name);
 		set_nlink(inode, 1);
 	}
-	retval = ext4_delete_entry(handle, dir, de, bh);
-	if (retval)
-		goto end_unlink;
-	dir->i_ctime = dir->i_mtime = current_time(dir);
-	ext4_update_dx_flag(dir);
-	ext4_mark_inode_dirty(handle, dir);
+	if (!skip_remove_dentry) {
+		retval = ext4_delete_entry(handle, dir, de, bh);
+		if (retval)
+			goto end_unlink;
+		dir->i_ctime = dir->i_mtime = current_time(dir);
+		ext4_update_dx_flag(dir);
+		ext4_mark_inode_dirty(handle, dir);
+	} else {
+		retval = 0;
+	}
 	drop_nlink(inode);
 	if (!inode->i_nlink)
 		ext4_orphan_add(handle, inode);
@@ -3045,6 +3049,30 @@ end_unlink:
 	brelse(bh);
 	if (handle)
 		ext4_journal_stop(handle);
+	return retval;
+}
+
+static int ext4_unlink(struct inode *dir, struct dentry *dentry)
+{
+	int retval;
+
+	if (unlikely(ext4_forced_shutdown(EXT4_SB(dir->i_sb))))
+		return -EIO;
+
+	trace_ext4_unlink_enter(dir, dentry);
+	/*
+	 * Initialize quotas before so that eventual writes go
+	 * in separate transaction
+	 */
+	retval = dquot_initialize(dir);
+	if (retval)
+		return retval;
+	retval = dquot_initialize(d_inode(dentry));
+	if (retval)
+		return retval;
+
+	retval = __ext4_unlink(dir, &dentry->d_name, d_inode(dentry));
+
 	trace_ext4_unlink_exit(dentry, retval);
 	return retval;
 }
