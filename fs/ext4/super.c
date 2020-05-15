@@ -1118,7 +1118,6 @@ static int ext4_drop_inode(struct inode *inode)
 static void ext4_i_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
-	ext4_fc_del(inode);
 	kmem_cache_free(ext4_inode_cachep, EXT4_I(inode));
 }
 
@@ -1132,6 +1131,12 @@ static void ext4_destroy_inode(struct inode *inode)
 				EXT4_I(inode), sizeof(struct ext4_inode_info),
 				true);
 		dump_stack();
+	}
+	if (!list_empty(&EXT4_I(inode)->i_fc_list)) {
+		spin_lock(&EXT4_SB(inode->i_sb)->s_fc_lock);
+		list_del_init(&EXT4_I(inode)->i_fc_list);
+		spin_unlock(&EXT4_SB(inode->i_sb)->s_fc_lock);
+		return;
 	}
 	call_rcu(&inode->i_rcu, ext4_i_callback);
 }
