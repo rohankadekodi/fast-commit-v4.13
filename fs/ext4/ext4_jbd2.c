@@ -454,6 +454,7 @@ static void write_to_fc_journal(struct super_block *sb,
 
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	long write_offset = 0;
+	long ret = 0;
 
 	/* Assuming data format:
 	 * <gen_id>, <len>, <chksum>, <data>, <padding>
@@ -668,11 +669,11 @@ static void ext4_end_buffer_io_sync(struct buffer_head *bh, int uptodate)
 {
 	BUFFER_TRACE(bh, "");
 	if (uptodate) {
-		ext4_debug("%s: Block %lld up-to-date",
+		ext4_debug("%s: Block %ld up-to-date",
 			   __func__, bh->b_blocknr);
 		set_buffer_uptodate(bh);
 	} else {
-		ext4_debug("%s: Block %lld not up-to-date",
+		ext4_debug("%s: Block %ld not up-to-date",
 			   __func__, bh->b_blocknr);
 		clear_buffer_uptodate(bh);
 	}
@@ -1370,7 +1371,7 @@ void ext4_init_fast_commit(struct super_block *sb, journal_t *journal)
 	sbi->fc_journal_start = (unsigned long) kaddr;
 	atomic64_set(&(sbi->fc_journal_valid_tail), 0);
 
-	printk(KERN_INFO "%s: Journal start = %0xlx. tail pointer = %ld\n",
+	printk(KERN_INFO "%s: Journal start = 0x%lx. tail pointer = %ld\n",
 	       __func__, sbi->fc_journal_start, sbi->fc_journal_valid_tail.counter);
 }
 
