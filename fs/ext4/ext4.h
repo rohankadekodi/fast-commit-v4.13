@@ -927,6 +927,32 @@ enum {
 #define EXT4_FC_TAG_ADD_DENTRY		0x4
 #define EXT4_FC_TAG_DEL_DENTRY		0x5
 
+struct fc_pmem_val_dentry {
+	__le32 fc_pmem_val_ino;
+	__le32 fc_pmem_val_parent;
+	/* Variable length Dentry name */
+	/* If ext4_fc_pmem_tlv->tag == CREATE, we also need to store the entire inode */
+};
+
+struct fc_pmem_val_range {
+	__le32 fc_pmem_val_ino;
+	__le32 fc_pmem_lblk_start;
+	__le32 fc_pmem_lblk_end;
+};
+
+struct fc_mem_inode {
+	__le32 fc_pmem_val_ino;
+	__le32 fc_pmem_inode_len;
+	/* Variable length inode */
+};
+
+struct ext4_fc_pmem_tlv {
+	__le32 fc_pmem_tag;
+	__le32 fc_pmem_len;
+	__le32 fc_pmem_crc;
+	__u8 fc_pmem_val[0];
+};
+
 /*
  * In memory list of dentry updates that are performed on the file
  * system used by fast commit code.
@@ -1203,6 +1229,10 @@ struct ext4_inode_info {
 							    * mode for fast
 							    * commits
 							    */
+
+#define EXT4_MOUNT2_JOURNAL_FC_PMEM	0x00000040 /* PMEM support mode for fast
+						    * commits
+						    */
 
 #define clear_opt(sb, opt)		EXT4_SB(sb)->s_mount_opt &= \
 						~EXT4_MOUNT_##opt
