@@ -33,6 +33,7 @@ config EXT3_FS_SECURITY
 config EXT4_FS
 	tristate "The Extended 4 (ext4) filesystem"
 	# Please update EXT3_FS selects when changing these
+	depends on FS_DAX
 	select JBD2
 	select CRC16
 	select CRYPTO

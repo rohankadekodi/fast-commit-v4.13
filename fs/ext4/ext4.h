@@ -1629,9 +1629,12 @@ struct ext4_sb_info {
 	struct list_head s_fc_q;	/* Inodes staged for fast commit
 					 * that have data changes in them.
 					 */
+	unsigned long fc_journal_start;
+	atomic64_t fc_journal_valid_tail;
+	
 	struct list_head s_fc_dentry_q;
 	spinlock_t s_fc_lock;
-	struct ext4_fc_stats s_fc_stats;
+	struct ext4_fc_stats s_fc_stats;	
 };
 
 static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)
