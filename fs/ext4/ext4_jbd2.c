@@ -452,15 +452,24 @@ void ext4_fc_disable(struct super_block *sb, int reason)
 
 static int write_log_entry(struct super_block *sb, void *data, long len)
 {
-  struct ext4_sb_info *sbi = EXT4_SB(sb);
+	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	long write_offset = 0;
 	long ret = 0;
   
-  trace_printk("PMEM_WRITE: Journal write of length %ld\n", len);
+	trace_printk("PMEM_WRITE: Journal write of length %ld\n", len);
 	/* Assuming data format:
 	 * <gen_id>, <len>, <chksum>, <data>, <padding>
 	 */
-	write_offset = atomic64_fetch_add(len, &sbi->fc_journal_valid_tail);
+	spin_lock(&sbi->s_fc_lock);
+	if (sbi->fc_journal_valid_tail.counter + len >= EXT4_NUM_FC_BLKS * PAGE_SIZE) {
+		sbi->fc_journal_valid_tail.counter = 0;		
+		write_offset = 0;
+	} else {
+		write_offset = sbi->fc_journal_valid_tail.counter;
+		sbi->fc_journal_valid_tail.counter += len;
+	}
+	spin_unlock(&sbi->s_fc_lock);
+	
 	ret = __copy_from_user_inatomic_nocache((void *) (sbi->fc_journal_start + write_offset),
 						data, len);
 	if (ret != len) {
@@ -1220,10 +1229,10 @@ int ext4_fc_perform_hard_commit(journal_t *journal)
 
 	if (!list_empty(&EXT4_SB(sb)->s_fc_dentry_q)) {
 		ret = fc_commit_dentry_updates(
-			journal, list_last_entry(
-				&EXT4_SB(sb)->s_fc_dentry_q,
-				struct ext4_fc_dentry_update,
-				fcd_list));
+					       journal, list_last_entry(
+						 &EXT4_SB(sb)->s_fc_dentry_q,
+						 struct ext4_fc_dentry_update,
+						 fcd_list));
 		if (ret < 0)
 			return ret;
 		nblks = ret;
