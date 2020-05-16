@@ -381,6 +381,7 @@ static inline tid_t get_running_txn_tid(struct super_block *sb)
 void ext4_fc_del(struct inode *inode)
 {
 	if (!ext4_should_fast_commit(inode->i_sb) ||
+	    test_opt2(inode->i_sb, JOURNAL_FC_PMEM) ||
 	    (EXT4_SB(inode->i_sb)->s_mount_state & EXT4_FC_REPLAY))
 		return;
 
@@ -449,13 +450,13 @@ void ext4_fc_disable(struct super_block *sb, int reason)
 	sbi->s_fc_stats.fc_ineligible_reason_count[reason]++;
 }
 
-static void write_to_fc_journal(struct super_block *sb,
-				void *data, long len) {
-
-	struct ext4_sb_info *sbi = EXT4_SB(sb);
+static int write_log_entry(struct super_block *sb, void *data, long len)
+{
+  struct ext4_sb_info *sbi = EXT4_SB(sb);
 	long write_offset = 0;
 	long ret = 0;
-
+  
+  trace_printk("PMEM_WRITE: Journal write of length %ld\n", len);
 	/* Assuming data format:
 	 * <gen_id>, <len>, <chksum>, <data>, <padding>
 	 */
@@ -465,8 +466,8 @@ static void write_to_fc_journal(struct super_block *sb,
 	if (ret != len) {
 		BUG();
 	}
+	return 0;
 }
-
 
 /*
  * Generic fast commit tracking function. If this is the first
@@ -517,6 +518,7 @@ struct __ext4_dentry_update_args {
 	int op;
 };
 
+
 static int __ext4_dentry_update(struct inode *inode, void *arg, bool update)
 {
 	struct ext4_fc_dentry_update *node;
@@ -524,6 +526,31 @@ static int __ext4_dentry_update(struct inode *inode, void *arg, bool update)
 	struct __ext4_dentry_update_args *dentry_update =
 		(struct __ext4_dentry_update_args *)arg;
 	struct dentry *dentry = dentry_update->dentry;
+	char *ptr;
+	int len, ret;
+
+	if (test_opt2(inode->i_sb, JOURNAL_FC_PMEM)) {
+		len = sizeof(struct ext4_fc_pmem_tlv) +
+			sizeof(struct fc_pmem_val_dentry) +
+			dentry->d_name.len;
+		if (dentry_update->op == EXT4_FC_TAG_CREAT_DENTRY) {
+			/* Inode size can be variable, for evaluation purpose,
+			 * let's assum inode size to be 256.
+			 */
+			len += 256;
+		}
+		write_unlock(&ei->i_fc_lock);
+		ptr = kmalloc(len, GFP_KERNEL);
+		if (!ptr) {
+			write_lock(&ei->i_fc_lock);
+			return -ENOMEM;
+		}
+		ret = write_log_entry(inode->i_sb, ptr, len);
+		kfree(ptr);
+		write_lock(&ei->i_fc_lock);
+		return ret;
+	}
+
 
 	write_unlock(&ei->i_fc_lock);
 	node = kmem_cache_alloc(ext4_fc_dentry_cachep, GFP_NOFS);
@@ -633,10 +660,27 @@ int __ext4_fc_track_range(struct inode *inode, void *arg, bool update)
 	struct ext4_inode_info *ei = EXT4_I(inode);
 	struct __ext4_fc_track_range_args *__arg =
 		(struct __ext4_fc_track_range_args *)arg;
+	char *buf;
+	int len, ret;
 
 	if (inode->i_ino < EXT4_FIRST_INO(inode->i_sb)) {
 		ext4_debug("Special inode %ld being modified\n", inode->i_ino);
 		return -ECANCELED;
+	}
+
+	if (test_opt2(inode->i_sb, JOURNAL_FC_PMEM)) {
+		len = sizeof(struct ext4_fc_pmem_tlv) +
+				sizeof(struct fc_pmem_val_range);
+		write_unlock(&ei->i_fc_lock);
+		buf = kmalloc(len, GFP_KERNEL);
+		if (unlikely(!buf)) {
+			write_lock(&ei->i_fc_lock);
+			return -ENOMEM;
+		}
+		ret = write_log_entry(inode->i_sb, buf, len);
+		kfree(buf);
+		write_lock(&ei->i_fc_lock);
+		return ret;
 	}
 
 	if (update) {
@@ -1222,6 +1266,9 @@ int ext4_fc_async_commit_inode(journal_t *journal, tid_t commit_tid,
 
 	trace_ext4_journal_fc_commit_cb_start(sb);
 	start_jiffies = jiffies;
+
+	if (test_opt2(sb, JOURNAL_FC_PMEM))
+		return 0;
 
 	if (!ext4_should_fast_commit(sb) ||
 	    (sbi->s_mount_state & EXT4_FC_INELIGIBLE)) {
