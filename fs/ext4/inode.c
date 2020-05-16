@@ -2956,7 +2956,7 @@ unplug:
 out_writepages:
 	trace_ext4_writepages_result(inode, wbc, ret,
 				     nr_to_write - wbc->nr_to_write);
-    ext4_fc_track_inode(inode);
+	ext4_fc_track_inode(inode);
 	percpu_up_read(&sbi->s_journal_flag_rwsem);
 	return ret;
 }
