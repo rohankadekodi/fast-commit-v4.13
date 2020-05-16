@@ -449,6 +449,24 @@ void ext4_fc_disable(struct super_block *sb, int reason)
 	sbi->s_fc_stats.fc_ineligible_reason_count[reason]++;
 }
 
+static void write_to_fc_journal(struct super_block *sb,
+				void *data, long len) {
+
+	struct ext4_sb_info *sbi = EXT4_SB(sb);
+	long write_offset = 0;
+
+	/* Assuming data format:
+	 * <gen_id>, <len>, <chksum>, <data>, <padding>
+	 */
+	write_offset = atomic64_fetch_add(len, &sbi->fc_journal_valid_tail);
+	ret = __copy_from_user_inatomic_nocache((void *) (sbi->fc_journal_start + write_offset),
+						data, len);
+	if (ret != len) {
+		BUG();
+	}
+}
+
+
 /*
  * Generic fast commit tracking function. If this is the first
  * time this we are called after a full commit, we initialize
@@ -1352,7 +1370,8 @@ void ext4_init_fast_commit(struct super_block *sb, journal_t *journal)
 	sbi->fc_journal_start = (unsigned long) kaddr;
 	atomic64_set(&(sbi->fc_journal_valid_tail), 0);
 
-	printk(KERN_INFO "%s: Journal start = %lx. tail pointer = %ld\n", __func__, sbi->fc_journal_start, sbi->fc_journal_valid_tail.counter);
+	printk(KERN_INFO "%s: Journal start = %0xlx. tail pointer = %ld\n",
+	       __func__, sbi->fc_journal_start, sbi->fc_journal_valid_tail.counter);
 }
 
 int __init ext4_init_fc_dentry_cache(void)
