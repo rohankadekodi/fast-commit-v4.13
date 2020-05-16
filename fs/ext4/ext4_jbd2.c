@@ -5,6 +5,7 @@
 
 #include "ext4_jbd2.h"
 #include "ext4_extents.h"
+#include <linux/dax.h>
 
 #include <trace/events/ext4.h>
 
@@ -451,7 +452,20 @@ void ext4_fc_disable(struct super_block *sb, int reason)
 
 static int write_log_entry(struct super_block *sb, void *data, long len)
 {
-	trace_printk("PMEM_WRITE: Journal write of length %ld\n", len);
+  struct ext4_sb_info *sbi = EXT4_SB(sb);
+	long write_offset = 0;
+	long ret = 0;
+  
+  trace_printk("PMEM_WRITE: Journal write of length %ld\n", len);
+	/* Assuming data format:
+	 * <gen_id>, <len>, <chksum>, <data>, <padding>
+	 */
+	write_offset = atomic64_fetch_add(len, &sbi->fc_journal_valid_tail);
+	ret = __copy_from_user_inatomic_nocache((void *) (sbi->fc_journal_start + write_offset),
+						data, len);
+	if (ret != len) {
+		BUG();
+	}
 	return 0;
 }
 
@@ -699,11 +713,11 @@ static void ext4_end_buffer_io_sync(struct buffer_head *bh, int uptodate)
 {
 	BUFFER_TRACE(bh, "");
 	if (uptodate) {
-		ext4_debug("%s: Block %lld up-to-date",
+		ext4_debug("%s: Block %ld up-to-date",
 			   __func__, bh->b_blocknr);
 		set_buffer_uptodate(bh);
 	} else {
-		ext4_debug("%s: Block %lld not up-to-date",
+		ext4_debug("%s: Block %ld not up-to-date",
 			   __func__, bh->b_blocknr);
 		clear_buffer_uptodate(bh);
 	}
@@ -1373,10 +1387,39 @@ out:
 
 void ext4_init_fast_commit(struct super_block *sb, journal_t *journal)
 {
+	ext4_fsblk_t pblock = 0;
+	sector_t sector = 0;
+	pgoff_t pgoff;
+	size_t size, map_len;
+	void *kaddr;
+	struct ext4_sb_info *sbi = EXT4_SB(sb);
+	int ret;
+	
+	size = EXT4_NUM_FC_BLKS * PAGE_SIZE;
+	
 	if (!ext4_should_fast_commit(sb))
 		return;
 	journal->j_fc_cleanup_callback = ext4_journal_fc_cleanup_cb;
 	jbd2_init_fast_commit(journal, EXT4_NUM_FC_BLKS);
+	jbd2_journal_bmap(journal, journal->j_first_fc, &pblock);
+
+	sector = pblock << 3;
+	ret = bdev_dax_pgoff(sb->s_bdev, sector, size, &pgoff);
+	if (ret) {
+		BUG();
+	}
+	
+	map_len = dax_direct_access(sbi->s_daxdev, pgoff, PHYS_PFN(size),
+				    &kaddr, NULL);
+	if (map_len < 0) {
+		BUG();
+	}
+
+	sbi->fc_journal_start = (unsigned long) kaddr;
+	atomic64_set(&(sbi->fc_journal_valid_tail), 0);
+
+	printk(KERN_INFO "%s: Journal start = 0x%lx. tail pointer = %ld\n",
+	       __func__, sbi->fc_journal_start, sbi->fc_journal_valid_tail.counter);
 }
 
 int __init ext4_init_fc_dentry_cache(void)
