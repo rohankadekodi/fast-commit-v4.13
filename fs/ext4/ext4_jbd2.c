@@ -410,7 +410,7 @@ void ext4_fc_del(struct inode *inode)
 	if (list_empty(&EXT4_I(inode)->i_fc_list))
 		return;
 
-	ext4_fc_disable(inode->i_sb, EXT4_FC_REASON_DELETE);
+	//ext4_fc_disable(inode->i_sb, EXT4_FC_REASON_DELETE);
 
 restart:
 	spin_lock(&EXT4_SB(inode->i_sb)->s_fc_lock);
@@ -544,9 +544,9 @@ static int __ext4_fc_track_template(
 	ret = __fc_track_fn(inode, args, update);
 	write_unlock(&ei->i_fc_lock);
 
-	if (!test_opt2(inode->i_sb, JOURNAL_FC_PMEM)) {
-		ext4_fc_enqueue_inode(inode);
-	}
+	//if (!test_opt2(inode->i_sb, JOURNAL_FC_PMEM)) {
+    ext4_fc_enqueue_inode(inode);
+	//}
 
 	return ret;
 }
