@@ -475,7 +475,7 @@ static inline int ext4_should_dioread_nolock(struct inode *inode)
 /* Magic of fast commit header */
 #define EXT4_FC_MAGIC			0xE2540090
 
-#define EXT4_NUM_FC_BLKS		128
+#define EXT4_NUM_FC_BLKS		512
 
 struct ext4_fc_commit_hdr {
 	/* Fast commit magic, should be EXT4_FC_MAGIC */

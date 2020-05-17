@@ -1118,6 +1118,8 @@ struct journal_s
 	 */
 	int			j_fc_wbufsize;
 
+	volatile int            j_should_commit;
+
 	/**
 	 * @j_last_sync_writer:
 	 *

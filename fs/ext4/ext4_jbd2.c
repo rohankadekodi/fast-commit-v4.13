@@ -89,6 +89,9 @@ int __ext4_journal_stop(const char *where, unsigned int line, handle_t *handle)
 	struct super_block *sb;
 	int err;
 	int rc;
+	struct ext4_sb_info *sbi;
+	tid_t tid;
+	struct journal_s *journal;
 
 	if (!ext4_handle_valid(handle)) {
 		ext4_put_nojournal(handle);
@@ -103,7 +106,21 @@ int __ext4_journal_stop(const char *where, unsigned int line, handle_t *handle)
 
 	sb = handle->h_transaction->t_journal->j_private;
 	rc = jbd2_journal_stop(handle);
-
+	sbi = EXT4_SB(sb);
+	
+	if (sbi->fc_should_commit) {
+		spin_lock(&sbi->s_fc_lock);
+		if (sbi->fc_should_commit) {			
+			journal = sbi->s_journal;
+			tid = journal->j_running_transaction->t_tid;
+			jbd2_complete_transaction(journal, tid);
+			sbi->fc_journal_valid_tail.counter = 0;
+			/* [TODO]: Increment gen_id here */
+			sbi->fc_should_commit = 0;
+		}
+		spin_unlock(&sbi->s_fc_lock);
+	}
+	
 	if (!err)
 		err = rc;
 	if (err)
@@ -455,24 +472,23 @@ static int write_log_entry(struct super_block *sb, void *data, long len)
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	long write_offset = 0;
 	long ret = 0;
-  
+		
 	trace_printk("PMEM_WRITE: Journal write of length %ld\n", len);
 	/* Assuming data format:
 	 * <gen_id>, <len>, <chksum>, <data>, <padding>
 	 */
+
 	spin_lock(&sbi->s_fc_lock);
-	if (sbi->fc_journal_valid_tail.counter + len >= EXT4_NUM_FC_BLKS * PAGE_SIZE) {
-		sbi->fc_journal_valid_tail.counter = 0;		
-		write_offset = 0;
-	} else {
-		write_offset = sbi->fc_journal_valid_tail.counter;
-		sbi->fc_journal_valid_tail.counter += len;
+	if (sbi->fc_journal_valid_tail.counter + len >= (EXT4_NUM_FC_BLKS-12) * PAGE_SIZE) {
+		sbi->fc_should_commit = 1;
 	}
+	write_offset = sbi->fc_journal_valid_tail.counter;
+	sbi->fc_journal_valid_tail.counter += len;
 	spin_unlock(&sbi->s_fc_lock);
 	
 	ret = __copy_from_user_inatomic_nocache((void *) (sbi->fc_journal_start + write_offset),
 						data, len);
-	if (ret != len) {
+	if (ret != 0) {
 		BUG();
 	}
 	return 0;
@@ -537,11 +553,19 @@ static int __ext4_dentry_update(struct inode *inode, void *arg, bool update)
 	struct dentry *dentry = dentry_update->dentry;
 	char *ptr;
 	int len, ret;
+	int cacheline_size = 64;
+	int diff_from_next_cacheline = 0;
 
 	if (test_opt2(inode->i_sb, JOURNAL_FC_PMEM)) {
 		len = sizeof(struct ext4_fc_pmem_tlv) +
 			sizeof(struct fc_pmem_val_dentry) +
 			dentry->d_name.len;
+
+		diff_from_next_cacheline = cacheline_size - (len % cacheline_size);
+		if (diff_from_next_cacheline != 64) {
+			len += diff_from_next_cacheline;
+		}
+		
 		if (dentry_update->op == EXT4_FC_TAG_CREAT_DENTRY) {
 			/* Inode size can be variable, for evaluation purpose,
 			 * let's assum inode size to be 256.
@@ -671,6 +695,8 @@ int __ext4_fc_track_range(struct inode *inode, void *arg, bool update)
 		(struct __ext4_fc_track_range_args *)arg;
 	char *buf;
 	int len, ret;
+	int cacheline_size = 64;
+	int diff_from_next_cacheline = 0;
 
 	if (inode->i_ino < EXT4_FIRST_INO(inode->i_sb)) {
 		ext4_debug("Special inode %ld being modified\n", inode->i_ino);
@@ -680,6 +706,11 @@ int __ext4_fc_track_range(struct inode *inode, void *arg, bool update)
 	if (test_opt2(inode->i_sb, JOURNAL_FC_PMEM)) {
 		len = sizeof(struct ext4_fc_pmem_tlv) +
 				sizeof(struct fc_pmem_val_range);
+		diff_from_next_cacheline = cacheline_size - (len % cacheline_size);
+		if (diff_from_next_cacheline != 64) {
+			len += diff_from_next_cacheline;
+		}
+		
 		write_unlock(&ei->i_fc_lock);
 		buf = kmalloc(len, GFP_KERNEL);
 		if (unlikely(!buf)) {
@@ -1179,7 +1210,7 @@ static void ext4_journal_fc_cleanup_cb(journal_t *journal)
 	struct ext4_inode_info *iter;
 	struct ext4_fc_dentry_update *fc_dentry;
 
-	spin_lock(&sbi->s_fc_lock);
+	//spin_lock(&sbi->s_fc_lock);
 	while (!list_empty(&sbi->s_fc_q)) {
 		iter = list_first_entry(&sbi->s_fc_q,
 				  struct ext4_inode_info, i_fc_list);
@@ -1200,17 +1231,17 @@ static void ext4_journal_fc_cleanup_cb(journal_t *journal)
 					     struct ext4_fc_dentry_update,
 					     fcd_list);
 		list_del_init(&fc_dentry->fcd_list);
-		spin_unlock(&sbi->s_fc_lock);
+		//spin_unlock(&sbi->s_fc_lock);
 
 		if (fc_dentry->fcd_name.name &&
-			fc_dentry->fcd_name.len > DNAME_INLINE_LEN)
+		    fc_dentry->fcd_name.len > DNAME_INLINE_LEN)
 			kfree(fc_dentry->fcd_name.name);
 		kmem_cache_free(ext4_fc_dentry_cachep, fc_dentry);
-		spin_lock(&sbi->s_fc_lock);
+		//spin_lock(&sbi->s_fc_lock);
 	}
 	INIT_LIST_HEAD(&sbi->s_fc_dentry_q);
 	sbi->s_mount_state &= ~EXT4_FC_INELIGIBLE;
-	spin_unlock(&sbi->s_fc_lock);
+	//spin_unlock(&sbi->s_fc_lock);
 	trace_ext4_journal_fc_stats(sb);
 }
 
