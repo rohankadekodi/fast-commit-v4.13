@@ -109,14 +109,21 @@ int __ext4_journal_stop(const char *where, unsigned int line, handle_t *handle)
 	sbi = EXT4_SB(sb);	
 
 
-	spin_lock(&sbi->s_fc_lock);		
-	if (sbi->fc_journal_valid_tail.counter >= (EXT4_NUM_FC_BLKS-1) * PAGE_SIZE) {
-		spin_unlock(&sbi->s_fc_lock);
-		journal = sbi->s_journal;
-		tid = journal->j_running_transaction->t_tid;
-		jbd2_complete_transaction(journal, tid);
-	} else {
-		spin_unlock(&sbi->s_fc_lock);
+	if (sbi->fc_journal_valid_tail.counter >= (EXT4_NUM_FC_BLKS-12) * PAGE_SIZE) {
+		spin_lock(&sbi->s_fc_lock);		
+		if (!sbi->fc_should_commit) {
+			sbi->fc_should_commit = 1;
+			spin_unlock(&sbi->s_fc_lock);
+			journal = sbi->s_journal;
+			tid = journal->j_running_transaction->t_tid;
+			jbd2_complete_transaction(journal, tid);
+			spin_lock(&sbi->s_fc_lock);
+			sbi->fc_should_commit = 0;
+			sbi->fc_journal_valid_tail.counter = 0;
+			spin_unlock(&sbi->s_fc_lock);
+		} else {
+			spin_unlock(&sbi->s_fc_lock);
+		}
 	}
 	
 	if (!err)
@@ -477,21 +484,12 @@ static int write_log_entry(struct super_block *sb, void *data, long len)
 	 * <gen_id>, <len>, <chksum>, <data>, <padding>
 	 */
 
-	spin_lock(&sbi->s_fc_lock);	
  check_again:
-	if (sbi->fc_journal_valid_tail.counter >= (EXT4_NUM_FC_BLKS-1) * PAGE_SIZE) {
+	spin_lock(&sbi->s_fc_lock);	
+	if (sbi->fc_journal_valid_tail.counter >= (EXT4_NUM_FC_BLKS-12) * PAGE_SIZE) {
 		if (sbi->fc_should_commit) {
-			DEFINE_WAIT(wait);
-			journal = sbi->s_journal;
-			prepare_to_wait(&journal->j_wait_done_commit, &wait,
-					TASK_UNINTERRUPTIBLE);		
 			spin_unlock(&sbi->s_fc_lock);
-			schedule();
-			spin_lock(&sbi->s_fc_lock);
-			finish_wait(&journal->j_wait_done_commit, &wait);
 			goto check_again;
-		} else {
-			sbi->fc_should_commit = 1;
 		}
 	}
 	
@@ -1226,13 +1224,13 @@ static void ext4_journal_fc_cleanup_cb(journal_t *journal)
 	struct ext4_fc_dentry_update *fc_dentry;
 
 	if (test_opt2(sb, JOURNAL_FC_PMEM)) {
-		spin_lock(&sbi->s_fc_lock);
-		sbi->fc_journal_valid_tail.counter = 0;
+		//spin_lock(&sbi->s_fc_lock);
+		//sbi->fc_journal_valid_tail.counter = 0;
 		// [TODO]: Increment gen ID
 		printk(KERN_INFO "%s: journal tail = %ld\n", __func__,
 		       sbi->fc_journal_valid_tail.counter);
 		sbi->fc_should_commit = 0;
-		spin_unlock(&sbi->s_fc_lock);
+		//spin_unlock(&sbi->s_fc_lock);
 		trace_ext4_journal_fc_stats(sb);
 		return;
 	}
