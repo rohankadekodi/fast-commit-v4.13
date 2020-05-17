@@ -106,18 +106,16 @@ int __ext4_journal_stop(const char *where, unsigned int line, handle_t *handle)
 
 	sb = handle->h_transaction->t_journal->j_private;
 	rc = jbd2_journal_stop(handle);
-	sbi = EXT4_SB(sb);
-	
-	if (sbi->fc_should_commit) {
-		spin_lock(&sbi->s_fc_lock);
-		if (sbi->fc_should_commit) {			
-			journal = sbi->s_journal;
-			tid = journal->j_running_transaction->t_tid;
-			jbd2_complete_transaction(journal, tid);
-			sbi->fc_journal_valid_tail.counter = 0;
-			/* [TODO]: Increment gen_id here */
-			sbi->fc_should_commit = 0;
-		}
+	sbi = EXT4_SB(sb);	
+
+
+	spin_lock(&sbi->s_fc_lock);		
+	if (sbi->fc_journal_valid_tail.counter >= (EXT4_NUM_FC_BLKS-1) * PAGE_SIZE) {
+		spin_unlock(&sbi->s_fc_lock);
+		journal = sbi->s_journal;
+		tid = journal->j_running_transaction->t_tid;
+		jbd2_complete_transaction(journal, tid);
+	} else {
 		spin_unlock(&sbi->s_fc_lock);
 	}
 	
@@ -472,16 +470,31 @@ static int write_log_entry(struct super_block *sb, void *data, long len)
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	long write_offset = 0;
 	long ret = 0;
+	struct journal_s *journal;
 		
 	trace_printk("PMEM_WRITE: Journal write of length %ld\n", len);
 	/* Assuming data format:
 	 * <gen_id>, <len>, <chksum>, <data>, <padding>
 	 */
 
-	spin_lock(&sbi->s_fc_lock);
-	if (sbi->fc_journal_valid_tail.counter + len >= (EXT4_NUM_FC_BLKS-12) * PAGE_SIZE) {
-		sbi->fc_should_commit = 1;
+	spin_lock(&sbi->s_fc_lock);	
+ check_again:
+	if (sbi->fc_journal_valid_tail.counter >= (EXT4_NUM_FC_BLKS-1) * PAGE_SIZE) {
+		if (sbi->fc_should_commit) {
+			DEFINE_WAIT(wait);
+			journal = sbi->s_journal;
+			prepare_to_wait(&journal->j_wait_done_commit, &wait,
+					TASK_UNINTERRUPTIBLE);		
+			spin_unlock(&sbi->s_fc_lock);
+			schedule();
+			spin_lock(&sbi->s_fc_lock);
+			finish_wait(&journal->j_wait_done_commit, &wait);
+			goto check_again;
+		} else {
+			sbi->fc_should_commit = 1;
+		}
 	}
+	
 	write_offset = sbi->fc_journal_valid_tail.counter;
 	sbi->fc_journal_valid_tail.counter += len;
 	spin_unlock(&sbi->s_fc_lock);
@@ -533,7 +546,9 @@ static int __ext4_fc_track_template(
 	ret = __fc_track_fn(inode, args, update);
 	write_unlock(&ei->i_fc_lock);
 
-	ext4_fc_enqueue_inode(inode);
+	if (!test_opt2(inode->i_sb, JOURNAL_FC_PMEM)) {
+		ext4_fc_enqueue_inode(inode);
+	}
 
 	return ret;
 }
@@ -663,7 +678,7 @@ void ext4_fc_track_create(struct inode *inode, struct dentry *dentry)
 static int __ext4_fc_add_inode(struct inode *inode, void *arg, bool update)
 {
 	struct ext4_inode_info *ei = EXT4_I(inode);
-
+		
 	if (update)
 		return -EEXIST;
 
@@ -1210,7 +1225,19 @@ static void ext4_journal_fc_cleanup_cb(journal_t *journal)
 	struct ext4_inode_info *iter;
 	struct ext4_fc_dentry_update *fc_dentry;
 
-	//spin_lock(&sbi->s_fc_lock);
+	if (test_opt2(sb, JOURNAL_FC_PMEM)) {
+		spin_lock(&sbi->s_fc_lock);
+		sbi->fc_journal_valid_tail.counter = 0;
+		// [TODO]: Increment gen ID
+		printk(KERN_INFO "%s: journal tail = %ld\n", __func__,
+		       sbi->fc_journal_valid_tail.counter);
+		sbi->fc_should_commit = 0;
+		spin_unlock(&sbi->s_fc_lock);
+		trace_ext4_journal_fc_stats(sb);
+		return;
+	}
+	
+	spin_lock(&sbi->s_fc_lock);
 	while (!list_empty(&sbi->s_fc_q)) {
 		iter = list_first_entry(&sbi->s_fc_q,
 				  struct ext4_inode_info, i_fc_list);
@@ -1231,17 +1258,17 @@ static void ext4_journal_fc_cleanup_cb(journal_t *journal)
 					     struct ext4_fc_dentry_update,
 					     fcd_list);
 		list_del_init(&fc_dentry->fcd_list);
-		//spin_unlock(&sbi->s_fc_lock);
+		spin_unlock(&sbi->s_fc_lock);
 
 		if (fc_dentry->fcd_name.name &&
 		    fc_dentry->fcd_name.len > DNAME_INLINE_LEN)
 			kfree(fc_dentry->fcd_name.name);
 		kmem_cache_free(ext4_fc_dentry_cachep, fc_dentry);
-		//spin_lock(&sbi->s_fc_lock);
+		spin_lock(&sbi->s_fc_lock);
 	}
 	INIT_LIST_HEAD(&sbi->s_fc_dentry_q);
 	sbi->s_mount_state &= ~EXT4_FC_INELIGIBLE;
-	//spin_unlock(&sbi->s_fc_lock);
+	spin_unlock(&sbi->s_fc_lock);
 	trace_ext4_journal_fc_stats(sb);
 }
 

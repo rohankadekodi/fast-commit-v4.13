@@ -1104,12 +1104,14 @@ static struct inode *ext4_alloc_inode(struct super_block *sb)
 static int ext4_drop_inode(struct inode *inode)
 {
 	int drop = generic_drop_inode(inode);
+	/*
 	if (drop) {
-		spin_unlock(&inode->i_lock);
+		spin_unlock(&inode->i_lock);		
 		if (!list_empty(&EXT4_I(inode)->i_fc_list))
 			drop = 0;
 		spin_lock(&inode->i_lock);
 	}
+	*/
 
 	trace_ext4_drop_inode(inode, drop);
 	return drop;
